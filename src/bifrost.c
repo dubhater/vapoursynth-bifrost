@@ -20,6 +20,8 @@ typedef struct {
    int variation;
    int conservativemask;
    int interlaced;
+   int block_width;
+   int block_height;
 
    const VSVideoInfo *vi;
    float relativeframediff;
@@ -36,28 +38,15 @@ static void VS_CC bifrostInit(VSMap *in, VSMap *out, void **instanceData, VSNode
 }
 
 
-static void ApplyMask(const VSFrameRef *srcp, const VSFrameRef *srcc, const VSFrameRef *srcn, VSFrameRef *dst, int blenddirection, const VSAPI *vsapi) {
-   const uint8_t *srcp_u = vsapi->getReadPtr(srcp, 1);
-   const uint8_t *srcp_v = vsapi->getReadPtr(srcp, 2);
+static void applyBlockRainbowMask(const uint8_t *srcp_u, const uint8_t *srcp_v,
+                                  const uint8_t *srcc_u, const uint8_t *srcc_v,
+                                  const uint8_t *srcn_u, const uint8_t *srcn_v,
+                                  uint8_t *dst_u, uint8_t *dst_v,
+                                  int block_width_uv, int block_height_uv, int stride_uv, int blenddirection) {
 
-   const uint8_t *srcc_u = vsapi->getReadPtr(srcc, 1);
-   const uint8_t *srcc_v = vsapi->getReadPtr(srcc, 2);
-
-   const uint8_t *srcn_u = vsapi->getReadPtr(srcn, 1);
-   const uint8_t *srcn_v = vsapi->getReadPtr(srcn, 2);
-
-   uint8_t *dst_u = vsapi->getWritePtr(dst, 1);
-   uint8_t *dst_v = vsapi->getWritePtr(dst, 2);
-
-   int rowsize_uv = vsapi->getFrameWidth(srcc, 1);
-   int height_uv = vsapi->getFrameHeight(srcc, 1);
-
-   int pitch_uv = vsapi->getStride(srcc, 1);
-
-
-   for (int y = 0; y < height_uv; y++) {
+   for (int y = 0; y < block_height_uv; y++) {
       if (blenddirection == bdNext) {
-         for (int x = 0; x < rowsize_uv; x++) {
+         for (int x = 0; x < block_width_uv; x++) {
             if (dst_v[x]) {
                dst_u[x] = (srcc_u[x]+srcn_u[x]+1) >> 1;
                dst_v[x] = (srcc_v[x]+srcn_v[x]+1) >> 1;
@@ -67,7 +56,7 @@ static void ApplyMask(const VSFrameRef *srcp, const VSFrameRef *srcc, const VSFr
             }
          }
       } else if (blenddirection == bdPrev) {
-         for (int x = 0; x < rowsize_uv; x++) {
+         for (int x = 0; x < block_width_uv; x++) {
             if (dst_v[x]) {
                dst_u[x] = (srcc_u[x]+srcp_u[x]+1) >> 1;
                dst_v[x] = (srcc_v[x]+srcp_v[x]+1) >> 1;
@@ -77,7 +66,7 @@ static void ApplyMask(const VSFrameRef *srcp, const VSFrameRef *srcc, const VSFr
             }
          }
       } else if (blenddirection == bdBoth) {
-         for (int x = 0; x < rowsize_uv; x++) {
+         for (int x = 0; x < block_width_uv; x++) {
             if (dst_v[x]) {
                dst_u[x] = (2*srcc_u[x]+srcp_u[x]+srcn_u[x]+3) >> 2;
                dst_v[x] = (2*srcc_v[x]+srcp_v[x]+srcn_v[x]+3) >> 2;
@@ -88,87 +77,72 @@ static void ApplyMask(const VSFrameRef *srcp, const VSFrameRef *srcc, const VSFr
          }
       }
 
-      srcp_u += pitch_uv;
-      srcp_v += pitch_uv;
+      srcp_u += stride_uv;
+      srcp_v += stride_uv;
 
-      srcc_u += pitch_uv;
-      srcc_v += pitch_uv;
+      srcc_u += stride_uv;
+      srcc_v += stride_uv;
 
-      srcn_u += pitch_uv;
-      srcn_v += pitch_uv;
+      srcn_u += stride_uv;
+      srcn_v += stride_uv;
 
-      dst_u += pitch_uv;
-      dst_v += pitch_uv;
+      dst_u += stride_uv;
+      dst_v += stride_uv;
    }
 }
 
 
-static void ProcessMask(VSFrameRef *dst, int conservativemask, const VSAPI *vsapi) {
-   uint8_t *dst_u = vsapi->getWritePtr(dst, 1);
-   uint8_t *dst_v = vsapi->getWritePtr(dst, 2);
+static void processBlockRainbowMask(uint8_t *dst_u, uint8_t *dst_v,
+                                    int block_width_uv, int block_height_uv, int stride_uv, int conservativemask) {
 
-   int dst_pitch_uv = vsapi->getStride(dst, 1);
-   int rowsize_uv = vsapi->getFrameWidth(dst, 1);
-   int height_uv = vsapi->getFrameHeight(dst, 1);
-
+   // Maybe needed later.
+   uint8_t *tmp = dst_v;
 
    //denoise mask, remove marked pixels with no horizontal marked neighbors
-   for (int y = 0; y < height_uv; y++) {
+   for (int y = 0; y < block_height_uv; y++) {
       dst_v[0] = dst_u[0] && dst_u[1];
-      for (int x = 1; x < rowsize_uv - 1; x++) {
+      for (int x = 1; x < block_width_uv - 1; x++) {
          dst_v[x] = dst_u[x] && (dst_u[x-1] || dst_u[x+1]);
       }
-      dst_v[rowsize_uv - 1] = dst_u[rowsize_uv - 1] && dst_u[rowsize_uv - 2];
+      dst_v[block_width_uv - 1] = dst_u[block_width_uv - 1] && dst_u[block_width_uv - 2];
 
-      dst_u += dst_pitch_uv;
-      dst_v += dst_pitch_uv;
+      dst_u += stride_uv;
+      dst_v += stride_uv;
    }
 
    //expand mask vertically
    if (!conservativemask) {
-      dst_v = vsapi->getWritePtr(dst, 2);
+      dst_v = tmp;
 
-      for (int x = 0; x < rowsize_uv; x++) {
-         dst_v[x] = dst_v[x] || dst_v[x+dst_pitch_uv];
+      for (int x = 0; x < block_width_uv; x++) {
+         dst_v[x] = dst_v[x] || dst_v[x + stride_uv];
       }
 
-      dst_v += dst_pitch_uv;
+      dst_v += stride_uv;
 
-      for (int y = 1; y < height_uv - 1; y++) {
-         for (int x = 0; x < rowsize_uv; x++) {
-            dst_v[x] = dst_v[x] || (dst_v[x+dst_pitch_uv] && dst_v[x-dst_pitch_uv]);
+      for (int y = 1; y < block_height_uv - 1; y++) {
+         for (int x = 0; x < block_width_uv; x++) {
+            dst_v[x] = dst_v[x] || (dst_v[x + stride_uv] && dst_v[x - stride_uv]);
          }
 
-         dst_v += dst_pitch_uv;
+         dst_v += stride_uv;
       }
 
-      for (int x = 0; x < rowsize_uv; x++) {
-         dst_v[x] = dst_v[x] || dst_v[x-dst_pitch_uv];
+      for (int x = 0; x < block_width_uv; x++) {
+         dst_v[x] = dst_v[x] || dst_v[x - stride_uv];
       }
    }
 }
 
 
-static void MakeMask(const VSFrameRef *srcp, const VSFrameRef *srcc, const VSFrameRef *srcn, VSFrameRef *dst, int variation, const VSAPI *vsapi) {
-   const uint8_t *srcp_u = vsapi->getReadPtr(srcp, 1);
-   const uint8_t *srcp_v = vsapi->getReadPtr(srcp, 2);
+static void makeBlockRainbowMask(const uint8_t *srcp_u, const uint8_t *srcp_v,
+                                 const uint8_t *srcc_u, const uint8_t *srcc_v,
+                                 const uint8_t *srcn_u, const uint8_t *srcn_v,
+                                 uint8_t *dst_u, uint8_t *dst_v,
+                                 int block_width_uv, int block_height_uv, int stride_uv, int variation) {
 
-   const uint8_t *srcc_u = vsapi->getReadPtr(srcc, 1);
-   const uint8_t *srcc_v = vsapi->getReadPtr(srcc, 2);
-
-   const uint8_t *srcn_u = vsapi->getReadPtr(srcn, 1);
-   const uint8_t *srcn_v = vsapi->getReadPtr(srcn, 2);
-
-   uint8_t *dst_u = vsapi->getWritePtr(dst, 1);
-   uint8_t *dst_v = vsapi->getWritePtr(dst, 2);
-
-   int rowsize_uv = vsapi->getFrameWidth(srcc, 1);
-   int height_uv = vsapi->getFrameHeight(srcc, 1);
-
-   int pitch_uv = vsapi->getStride(srcc, 1);
-
-   for (int y = 0; y < height_uv; y++) {  
-      for (int x = 0; x < rowsize_uv; x++) {
+   for (int y = 0; y < block_height_uv; y++) {
+      for (int x = 0; x < block_width_uv; x++) {
          uint8_t up = srcp_u[x];
          uint8_t uc = srcc_u[x];
          uint8_t un = srcn_u[x];
@@ -185,46 +159,54 @@ static void MakeMask(const VSFrameRef *srcp, const VSFrameRef *srcc, const VSFra
 
          dst_u[x] = ((( ucup+variation) & ( ucun+variation)) < 0)
                  || (((-ucup+variation) & (-ucun+variation)) < 0)
-                 || ((( vcvp+variation) & ( vcvn+variation)) < 0) 
+                 || ((( vcvp+variation) & ( vcvn+variation)) < 0)
                  || (((-vcvp+variation) & (-vcvn+variation)) < 0);
       }
 
-      srcp_u += pitch_uv;
-      srcp_v += pitch_uv;
+      srcp_u += stride_uv;
+      srcp_v += stride_uv;
 
-      srcc_u += pitch_uv;
-      srcc_v += pitch_uv;
+      srcc_u += stride_uv;
+      srcc_v += stride_uv;
 
-      srcn_u += pitch_uv;
-      srcn_v += pitch_uv;
+      srcn_u += stride_uv;
+      srcn_v += stride_uv;
 
-      dst_u += pitch_uv;
-      dst_v += pitch_uv;
+      dst_u += stride_uv;
+      dst_v += stride_uv;
    }
 }
 
 
-static float FrameDiff(const VSFrameRef *f1, const VSFrameRef *f2, const VSAPI *vsapi) {
-   const uint8_t *f1_y = vsapi->getReadPtr(f1, 0);
-   const uint8_t *f2_y = vsapi->getReadPtr(f2, 0);
+static void copyChromaBlock(uint8_t *dst_u, uint8_t *dst_v,
+                      const uint8_t *src_u, const uint8_t *src_v,
+                      int block_width_uv, int block_height_uv, int stride_uv) {
 
-   int pitch_y = vsapi->getStride(f1, 0);
+   for (int y = 0; y < block_height_uv; y++) {
+      memcpy(dst_u, src_u, block_width_uv);
+      memcpy(dst_v, src_v, block_width_uv);
 
-   int rowsize_y = vsapi->getFrameWidth(f1, 0);
-   int height_y = vsapi->getFrameHeight(f1, 0);
+      dst_u += stride_uv;
+      dst_v += stride_uv;
+      src_u += stride_uv;
+      src_v += stride_uv;
+   }
+}
 
+
+static float blockLumaDiff(const uint8_t *src1_y, const uint8_t *src2_y, int block_width, int block_height, int stride_y) {
    int diff = 0;
 
-   for (int y = 0; y < height_y; y++) {  
-      for (int x = 0; x < rowsize_y; x++) {
-         diff += abs(f1_y[x] - f2_y[x]);
+   for (int y = 0; y < block_height; y++) {
+      for (int x = 0; x < block_width; x++) {
+         diff += abs(src1_y[x] - src2_y[x]);
       }
 
-      f1_y += pitch_y;
-      f2_y += pitch_y;
+      src1_y += stride_y;
+      src2_y += stride_y;
    }
 
-   return (float)diff / (rowsize_y * height_y);
+   return (float)diff / (block_width * block_height);
 }
 
 
@@ -240,6 +222,8 @@ static const VSFrameRef *VS_CC bifrostGetFrame(int n, int activationReason, void
       vsapi->requestFrameFilter(n, d->node, frameCtx);
       vsapi->requestFrameFilter(min(n + d->offset,   d->vi->numFrames-1), d->node, frameCtx);
       vsapi->requestFrameFilter(min(n + d->offset*2, d->vi->numFrames-1), d->node, frameCtx);
+
+      vsapi->requestFrameFilter(n, d->altnode, frameCtx);
    } else if (activationReason == arAllFramesReady) {
       const VSFrameRef *srcpp = vsapi->getFrameFilter(max(n - d->offset*2, 0), d->node, frameCtx);
       const VSFrameRef *srcp  = vsapi->getFrameFilter(max(n - d->offset,   0), d->node, frameCtx);
@@ -247,65 +231,152 @@ static const VSFrameRef *VS_CC bifrostGetFrame(int n, int activationReason, void
       const VSFrameRef *srcn  = vsapi->getFrameFilter(min(n + d->offset,   d->vi->numFrames-1), d->node, frameCtx);
       const VSFrameRef *srcnn = vsapi->getFrameFilter(min(n + d->offset*2, d->vi->numFrames-1), d->node, frameCtx);
 
+      const VSFrameRef *altsrcc = vsapi->getFrameFilter(n, d->altnode, frameCtx);
+
 #undef min
 #undef max
-
-      float ldprev = FrameDiff(srcp, srcc, vsapi);
-      float ldnext = FrameDiff(srcc, srcn, vsapi);
-      float ldprevprev = 0.0f;
-      float ldnextnext = 0.0f;
-
-      //too much movevement in both directions?
-      if (ldnext > d->scenelumathresh && ldprev > d->scenelumathresh) {
-         //return child2->GetFrame(n, env);
-         // FIXME: should return frame n from d->altnode
-         vsapi->freeFrame(srcpp);
-         vsapi->freeFrame(srcp);
-         vsapi->freeFrame(srcn);
-         vsapi->freeFrame(srcnn);
-         return srcc;
-      }
-
-      if (ldnext > d->scenelumathresh) {
-         ldprevprev = FrameDiff(srcpp, srcp, vsapi);
-      } else if (ldprev > d->scenelumathresh) {
-         ldnextnext = FrameDiff(srcn, srcnn, vsapi);
-      }
-
-      //two consecutive frames in one direction to generate mask?
-      if ((ldnext > d->scenelumathresh && ldprevprev > d->scenelumathresh) || (ldprev > d->scenelumathresh && ldnextnext > d->scenelumathresh)) {
-         //return child2->GetFrame(n, env);
-         // FIXME: should return frame n from d->altnode
-         vsapi->freeFrame(srcpp);
-         vsapi->freeFrame(srcp);
-         vsapi->freeFrame(srcn);
-         vsapi->freeFrame(srcnn);
-         return srcc;
-      }
-
       const VSFrameRef *planeSrc[3] = { srcc, NULL, NULL };
       const int planes[3] = { 0 };
       VSFrameRef *dst = vsapi->newVideoFrame2(d->vi->format, d->vi->width, d->vi->height, planeSrc, planes, srcc, core);
 
-      //generate mask from right side of scenechange
-      if (ldnext > d->scenelumathresh) {
-         MakeMask(srcpp, srcp, srcc, dst, d->variation, vsapi);
-      } else if (ldprev > d->scenelumathresh) {
-         MakeMask(srcc, srcn, srcnn, dst, d->variation, vsapi);
-      } else {
-         MakeMask(srcp, srcc, srcn, dst, d->variation, vsapi);
-      }
+      const uint8_t *srcpp_y = vsapi->getReadPtr(srcpp, 0);
+      const uint8_t *srcpp_u = vsapi->getReadPtr(srcpp, 1);
+      const uint8_t *srcpp_v = vsapi->getReadPtr(srcpp, 2);
 
-      //denoise and expand mask
-      ProcessMask(dst, d->conservativemask, vsapi);
+      const uint8_t *srcp_y = vsapi->getReadPtr(srcp, 0);
+      const uint8_t *srcp_u = vsapi->getReadPtr(srcp, 1);
+      const uint8_t *srcp_v = vsapi->getReadPtr(srcp, 2);
 
-      //determine direction to blend in
-      if (ldprev > ldnext*d->relativeframediff) {
-         ApplyMask(srcp, srcc, srcn, dst, bdNext, vsapi);
-      } else if (ldnext > ldprev*d->relativeframediff) {
-         ApplyMask(srcp, srcc, srcn, dst, bdPrev, vsapi);
-      } else {
-         ApplyMask(srcp, srcc, srcn, dst, bdBoth, vsapi);
+      const uint8_t *srcc_y = vsapi->getReadPtr(srcc, 0);
+      const uint8_t *srcc_u = vsapi->getReadPtr(srcc, 1);
+      const uint8_t *srcc_v = vsapi->getReadPtr(srcc, 2);
+
+      const uint8_t *srcn_y = vsapi->getReadPtr(srcn, 0);
+      const uint8_t *srcn_u = vsapi->getReadPtr(srcn, 1);
+      const uint8_t *srcn_v = vsapi->getReadPtr(srcn, 2);
+
+      const uint8_t *srcnn_y = vsapi->getReadPtr(srcnn, 0);
+      const uint8_t *srcnn_u = vsapi->getReadPtr(srcnn, 1);
+      const uint8_t *srcnn_v = vsapi->getReadPtr(srcnn, 2);
+
+      const uint8_t *altsrcc_u = vsapi->getReadPtr(altsrcc, 1);
+      const uint8_t *altsrcc_v = vsapi->getReadPtr(altsrcc, 2);
+
+      uint8_t *dst_u = vsapi->getWritePtr(dst, 1);
+      uint8_t *dst_v = vsapi->getWritePtr(dst, 2);
+
+      int stride_y = vsapi->getStride(srcc, 0);
+      int stride_uv = vsapi->getStride(srcc, 1);
+
+      int block_width = d->block_width;
+      int block_height = d->block_height;
+      int block_width_uv = block_width >> d->vi->format->subSamplingW;
+      int block_height_uv = block_height >> d->vi->format->subSamplingH;
+
+      int blocks_x = d->vi->width / block_width;
+      int blocks_y = d->vi->height / block_height;
+      int remainder_x = d->vi->width % block_width;
+      int remainder_y = d->vi->height % block_height;
+
+      int x, y;
+
+      for (y = 0; y < blocks_y; y++) {
+         for (x = 0; x < blocks_x; x++) {
+            float ldprev = blockLumaDiff(srcp_y + block_width*x, srcc_y + block_width*x, block_width, block_height, stride_y);
+            float ldnext = blockLumaDiff(srcc_y + block_width*x, srcn_y + block_width*x, block_width, block_height, stride_y);
+            float ldprevprev = 0.0f;
+            float ldnextnext = 0.0f;
+
+            //too much movement in both directions?
+            if (ldnext > d->scenelumathresh && ldprev > d->scenelumathresh) {
+               copyChromaBlock(dst_u + block_width_uv*x, dst_v + block_width_uv*x,
+                               altsrcc_u + block_width_uv*x, altsrcc_v + block_width_uv*x,
+                               block_width_uv, block_height_uv, stride_uv);
+               continue;
+            }
+
+            if (ldnext > d->scenelumathresh) {
+               ldprevprev = blockLumaDiff(srcpp_y + block_width*x, srcp_y + block_width*x, block_width, block_height, stride_y);
+            } else if (ldprev > d->scenelumathresh) {
+               ldnextnext = blockLumaDiff(srcn_y + block_width*x, srcnn_y + block_width*x, block_width, block_height, stride_y);
+            }
+
+            //two consecutive frames in one direction to generate mask?
+            if ((ldnext > d->scenelumathresh && ldprevprev > d->scenelumathresh) ||
+                (ldprev > d->scenelumathresh && ldnextnext > d->scenelumathresh)) {
+               copyChromaBlock(dst_u + block_width_uv*x, dst_v + block_width_uv*x,
+                               altsrcc_u + block_width_uv*x, altsrcc_v + block_width_uv*x,
+                               block_width_uv, block_height_uv, stride_uv);
+               continue;
+            }
+
+            //generate mask from correct side of scenechange
+            if (ldnext > d->scenelumathresh) {
+               makeBlockRainbowMask(srcpp_u + block_width_uv*x, srcpp_v + block_width_uv*x,
+                                     srcp_u + block_width_uv*x,  srcp_v + block_width_uv*x,
+                                     srcc_u + block_width_uv*x,  srcc_v + block_width_uv*x,
+                                      dst_u + block_width_uv*x,   dst_v + block_width_uv*x,
+                                    block_width_uv, block_height_uv, stride_uv, d->variation);
+            } else if (ldprev > d->scenelumathresh) {
+               makeBlockRainbowMask( srcc_u + block_width_uv*x,  srcc_v + block_width_uv*x,
+                                     srcn_u + block_width_uv*x,  srcn_v + block_width_uv*x,
+                                    srcnn_u + block_width_uv*x, srcnn_v + block_width_uv*x,
+                                      dst_u + block_width_uv*x,   dst_v + block_width_uv*x,
+                                    block_width_uv, block_height_uv, stride_uv, d->variation);
+            } else {
+               makeBlockRainbowMask(srcp_u + block_width_uv*x, srcp_v + block_width_uv*x,
+                                    srcc_u + block_width_uv*x, srcc_v + block_width_uv*x,
+                                    srcn_u + block_width_uv*x, srcn_v + block_width_uv*x,
+                                     dst_u + block_width_uv*x,  dst_v + block_width_uv*x,
+                                    block_width_uv, block_height_uv, stride_uv, d->variation);
+            }
+
+            //denoise and expand mask
+            processBlockRainbowMask(dst_u + block_width_uv*x, dst_v + block_width_uv*x,
+                                    block_width_uv, block_height_uv, stride_uv, d->conservativemask);
+
+            //determine direction to blend in
+            int direction;
+            if (ldprev > ldnext*d->relativeframediff) {
+               direction = bdNext;
+            } else if (ldnext > ldprev*d->relativeframediff) {
+               direction = bdPrev;
+            } else {
+               direction = bdBoth;
+            }
+            applyBlockRainbowMask(srcp_u + block_width_uv*x, srcp_v + block_width_uv*x,
+                                  srcc_u + block_width_uv*x, srcc_v + block_width_uv*x,
+                                  srcn_u + block_width_uv*x, srcn_v + block_width_uv*x,
+                                   dst_u + block_width_uv*x,  dst_v + block_width_uv*x,
+                                  block_width_uv, block_height_uv, stride_uv, direction);
+
+         }
+
+         srcpp_y += block_height * stride_y;
+         srcpp_u += block_height_uv * stride_uv;
+         srcpp_v += block_height_uv * stride_uv;
+
+         srcp_y += block_height * stride_y;
+         srcp_u += block_height_uv * stride_uv;
+         srcp_v += block_height_uv * stride_uv;
+
+         srcc_y += block_height * stride_y;
+         srcc_u += block_height_uv * stride_uv;
+         srcc_v += block_height_uv * stride_uv;
+
+         srcn_y += block_height * stride_y;
+         srcn_u += block_height_uv * stride_uv;
+         srcn_v += block_height_uv * stride_uv;
+
+         srcnn_y += block_height * stride_y;
+         srcnn_u += block_height_uv * stride_uv;
+         srcnn_v += block_height_uv * stride_uv;
+
+         altsrcc_u += block_height_uv * stride_uv;
+         altsrcc_v += block_height_uv * stride_uv;
+
+         dst_u += block_height_uv * stride_uv;
+         dst_v += block_height_uv * stride_uv;
       }
 
       vsapi->freeFrame(srcpp);
@@ -313,6 +384,7 @@ static const VSFrameRef *VS_CC bifrostGetFrame(int n, int activationReason, void
       vsapi->freeFrame(srcc);
       vsapi->freeFrame(srcn);
       vsapi->freeFrame(srcnn);
+      vsapi->freeFrame(altsrcc);
 
       return dst;
    }
@@ -356,6 +428,16 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
 
    d.conservativemask = !!vsapi->propGetInt(in, "conservativemask", 0, &err);
 
+   d.block_width = vsapi->propGetInt(in, "blockx", 0, &err);
+   if (err) {
+      d.block_width = 4;
+   }
+
+   d.block_height = vsapi->propGetInt(in, "blocky", 0, &err);
+   if (err) {
+      d.block_height = 4;
+   }
+
    d.node = vsapi->propGetNode(in, "clip", 0, 0);
    d.vi = vsapi->getVideoInfo(d.node);
 
@@ -388,6 +470,8 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegiste
                 "scenelumathresh:float:opt;"
                 "variation:int:opt;"
                 "conservativemask:int:opt;"
-                "interlaced:int:opt;",
+                "interlaced:int:opt;"
+                "blockx:int:opt;"
+                "blocky:int:opt;",
                 bifrostCreate, 0, plugin);
 }
