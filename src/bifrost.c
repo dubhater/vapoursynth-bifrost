@@ -2,8 +2,8 @@
 //#include <stdlib.h>
 //#include <string.h>
 
-#include <vapoursynth/VapourSynth.h>
-#include <vapoursynth/VSHelper.h>
+#include <VapourSynth.h>
+#include <VSHelper.h>
 
 
 enum BlendDirection {
