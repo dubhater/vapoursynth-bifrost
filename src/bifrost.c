@@ -16,9 +16,9 @@ enum BlendDirection {
 typedef struct {
    VSNodeRef *node;
    VSNodeRef *altnode;
-   float scenelumathresh;
+   float luma_thresh;
    int variation;
-   int conservativemask;
+   int conservative_mask;
    int interlaced;
    int block_width;
    int block_height;
@@ -93,7 +93,7 @@ static void applyBlockRainbowMask(const uint8_t *srcp_u, const uint8_t *srcp_v,
 
 
 static void processBlockRainbowMask(uint8_t *dst_u, uint8_t *dst_v,
-                                    int block_width_uv, int block_height_uv, int stride_uv, int conservativemask) {
+                                    int block_width_uv, int block_height_uv, int stride_uv, int conservative_mask) {
 
    // Maybe needed later.
    uint8_t *tmp = dst_v;
@@ -111,7 +111,7 @@ static void processBlockRainbowMask(uint8_t *dst_u, uint8_t *dst_v,
    }
 
    //expand mask vertically
-   if (!conservativemask) {
+   if (!conservative_mask) {
       dst_v = tmp;
 
       for (int x = 0; x < block_width_uv; x++) {
@@ -284,22 +284,22 @@ static const VSFrameRef *VS_CC bifrostGetFrame(int n, int activationReason, void
             float ldnextnext = 0.0f;
 
             //too much movement in both directions?
-            if (ldnext > d->scenelumathresh && ldprev > d->scenelumathresh) {
+            if (ldnext > d->luma_thresh && ldprev > d->luma_thresh) {
                copyChromaBlock(dst_u + block_width_uv*x, dst_v + block_width_uv*x,
                                altsrcc_u + block_width_uv*x, altsrcc_v + block_width_uv*x,
                                block_width_uv, block_height_uv, stride_uv);
                continue;
             }
 
-            if (ldnext > d->scenelumathresh) {
+            if (ldnext > d->luma_thresh) {
                ldprevprev = blockLumaDiff(srcpp_y + block_width*x, srcp_y + block_width*x, block_width, block_height, stride_y);
-            } else if (ldprev > d->scenelumathresh) {
+            } else if (ldprev > d->luma_thresh) {
                ldnextnext = blockLumaDiff(srcn_y + block_width*x, srcnn_y + block_width*x, block_width, block_height, stride_y);
             }
 
             //two consecutive frames in one direction to generate mask?
-            if ((ldnext > d->scenelumathresh && ldprevprev > d->scenelumathresh) ||
-                (ldprev > d->scenelumathresh && ldnextnext > d->scenelumathresh)) {
+            if ((ldnext > d->luma_thresh && ldprevprev > d->luma_thresh) ||
+                (ldprev > d->luma_thresh && ldnextnext > d->luma_thresh)) {
                copyChromaBlock(dst_u + block_width_uv*x, dst_v + block_width_uv*x,
                                altsrcc_u + block_width_uv*x, altsrcc_v + block_width_uv*x,
                                block_width_uv, block_height_uv, stride_uv);
@@ -307,13 +307,13 @@ static const VSFrameRef *VS_CC bifrostGetFrame(int n, int activationReason, void
             }
 
             //generate mask from correct side of scenechange
-            if (ldnext > d->scenelumathresh) {
+            if (ldnext > d->luma_thresh) {
                makeBlockRainbowMask(srcpp_u + block_width_uv*x, srcpp_v + block_width_uv*x,
                                      srcp_u + block_width_uv*x,  srcp_v + block_width_uv*x,
                                      srcc_u + block_width_uv*x,  srcc_v + block_width_uv*x,
                                       dst_u + block_width_uv*x,   dst_v + block_width_uv*x,
                                     block_width_uv, block_height_uv, stride_uv, d->variation);
-            } else if (ldprev > d->scenelumathresh) {
+            } else if (ldprev > d->luma_thresh) {
                makeBlockRainbowMask( srcc_u + block_width_uv*x,  srcc_v + block_width_uv*x,
                                      srcn_u + block_width_uv*x,  srcn_v + block_width_uv*x,
                                     srcnn_u + block_width_uv*x, srcnn_v + block_width_uv*x,
@@ -329,7 +329,7 @@ static const VSFrameRef *VS_CC bifrostGetFrame(int n, int activationReason, void
 
             //denoise and expand mask
             processBlockRainbowMask(dst_u + block_width_uv*x, dst_v + block_width_uv*x,
-                                    block_width_uv, block_height_uv, stride_uv, d->conservativemask);
+                                    block_width_uv, block_height_uv, stride_uv, d->conservative_mask);
 
             //determine direction to blend in
             int direction;
@@ -413,16 +413,12 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
       d.interlaced = 1;
    }
 
-   d.scenelumathresh = (float)vsapi->propGetFloat(in, "scenelumathresh", 0, &err);
+   d.luma_thresh = (float)vsapi->propGetFloat(in, "luma_thresh", 0, &err);
    if (err) {
-      if (d.interlaced) {
-         d.scenelumathresh = 3.0f;
-      } else {
-         d.scenelumathresh = 1.5f;
-      }
+      d.luma_thresh = 10.0f;
    }
 
-   d.conservativemask = !!vsapi->propGetInt(in, "conservativemask", 0, &err);
+   d.conservative_mask = !!vsapi->propGetInt(in, "conservative_mask", 0, &err);
 
    d.block_width = vsapi->propGetInt(in, "blockx", 0, &err);
    if (err) {
@@ -464,88 +460,92 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
    const char *error;
    VSPlugin *stdPlugin = vsapi->getPluginByNs("std", core);
 
-   args = vsapi->createMap();
+   if (d.interlaced) {
+      args = vsapi->createMap();
 
-   vsapi->propSetNode(args, "clip", d.node, paReplace);
-   vsapi->freeNode(d.node);
-   vsapi->propSetInt(args, "tff", 1, paReplace);
-   ret = vsapi->invoke(stdPlugin, "SeparateFields", args);
-   error = vsapi->getError(ret);
-   if (error) {
-      vsapi->setError(out, error);
-      vsapi->freeMap(args);
-      vsapi->freeMap(ret);
-      vsapi->freeNode(d.altnode);
-      return;
-   }
-   d.node = vsapi->propGetNode(ret, "clip", 0, NULL);
-   vsapi->freeMap(ret);
-
-   vsapi->clearMap(args);
-
-   vsapi->propSetNode(args, "clip", d.altnode, paReplace);
-   vsapi->freeNode(d.altnode);
-   vsapi->propSetInt(args, "tff", 1, paReplace);
-   ret = vsapi->invoke(stdPlugin, "SeparateFields", args);
-   error = vsapi->getError(ret);
-   if (error) {
-      vsapi->setError(out, error);
-      vsapi->freeMap(args);
-      vsapi->freeMap(ret);
+      vsapi->propSetNode(args, "clip", d.node, paReplace);
       vsapi->freeNode(d.node);
-      return;
-   }
-   d.altnode = vsapi->propGetNode(ret, "clip", 0, NULL);
-   vsapi->freeMap(ret);
+      vsapi->propSetInt(args, "tff", 1, paReplace);
+      ret = vsapi->invoke(stdPlugin, "SeparateFields", args);
+      error = vsapi->getError(ret);
+      if (error) {
+         vsapi->setError(out, error);
+         vsapi->freeMap(args);
+         vsapi->freeMap(ret);
+         vsapi->freeNode(d.altnode);
+         return;
+      }
+      d.node = vsapi->propGetNode(ret, "clip", 0, NULL);
+      vsapi->freeMap(ret);
 
-   d.vi = vsapi->getVideoInfo(d.node);
+      vsapi->clearMap(args);
+
+      vsapi->propSetNode(args, "clip", d.altnode, paReplace);
+      vsapi->freeNode(d.altnode);
+      vsapi->propSetInt(args, "tff", 1, paReplace);
+      ret = vsapi->invoke(stdPlugin, "SeparateFields", args);
+      error = vsapi->getError(ret);
+      if (error) {
+         vsapi->setError(out, error);
+         vsapi->freeMap(args);
+         vsapi->freeMap(ret);
+         vsapi->freeNode(d.node);
+         return;
+      }
+      d.altnode = vsapi->propGetNode(ret, "clip", 0, NULL);
+      vsapi->freeMap(ret);
+
+      d.vi = vsapi->getVideoInfo(d.node);
+   }
 
    data = malloc(sizeof(d));
    *data = d;
 
    vsapi->createFilter(in, out, "Bifrost", bifrostInit, bifrostGetFrame, bifrostFree, fmParallel, 0, data, core);
 
-   VSNodeRef *tmpnode = vsapi->propGetNode(out, "clip", 0, NULL);
+   if (d.interlaced) {
+      VSNodeRef *tmpnode = vsapi->propGetNode(out, "clip", 0, NULL);
 
-   vsapi->clearMap(args);
+      vsapi->clearMap(args);
 
-   vsapi->propSetNode(args, "clip", tmpnode, paReplace);
-   vsapi->freeNode(tmpnode);
-   vsapi->propSetInt(args, "tff", 1, paReplace);
-   ret = vsapi->invoke(stdPlugin, "DoubleWeave", args);
-   error = vsapi->getError(ret);
-   if (error) {
-      vsapi->setError(out, error);
-      vsapi->freeMap(args);
+      vsapi->propSetNode(args, "clip", tmpnode, paReplace);
+      vsapi->freeNode(tmpnode);
+      vsapi->propSetInt(args, "tff", 1, paReplace);
+      ret = vsapi->invoke(stdPlugin, "DoubleWeave", args);
+      error = vsapi->getError(ret);
+      if (error) {
+         vsapi->setError(out, error);
+         vsapi->freeMap(args);
+         vsapi->freeMap(ret);
+         vsapi->freeNode(d.node);
+         vsapi->freeNode(d.altnode);
+         return;
+      }
+      tmpnode = vsapi->propGetNode(ret, "clip", 0, NULL);
       vsapi->freeMap(ret);
-      vsapi->freeNode(d.node);
-      vsapi->freeNode(d.altnode);
-      return;
-   }
-   tmpnode = vsapi->propGetNode(ret, "clip", 0, NULL);
-   vsapi->freeMap(ret);
 
-   vsapi->clearMap(args);
+      vsapi->clearMap(args);
 
-   vsapi->propSetNode(args, "clip", tmpnode, paReplace);
-   vsapi->freeNode(tmpnode);
-   vsapi->propSetInt(args, "cycle", 2, paReplace);
-   vsapi->propSetInt(args, "offsets", 0, paReplace);
-   ret = vsapi->invoke(stdPlugin, "SelectEvery", args);
-   error = vsapi->getError(ret);
-   if (error) {
-      vsapi->setError(out, error);
-      vsapi->freeMap(args);
+      vsapi->propSetNode(args, "clip", tmpnode, paReplace);
+      vsapi->freeNode(tmpnode);
+      vsapi->propSetInt(args, "cycle", 2, paReplace);
+      vsapi->propSetInt(args, "offsets", 0, paReplace);
+      ret = vsapi->invoke(stdPlugin, "SelectEvery", args);
+      error = vsapi->getError(ret);
+      if (error) {
+         vsapi->setError(out, error);
+         vsapi->freeMap(args);
+         vsapi->freeMap(ret);
+         vsapi->freeNode(d.node);
+         vsapi->freeNode(d.altnode);
+         return;
+      }
+      tmpnode = vsapi->propGetNode(ret, "clip", 0, NULL);
       vsapi->freeMap(ret);
-      vsapi->freeNode(d.node);
-      vsapi->freeNode(d.altnode);
-      return;
+      vsapi->freeMap(args);
+      vsapi->propSetNode(out, "clip", tmpnode, paReplace);
+      vsapi->freeNode(tmpnode);
    }
-   tmpnode = vsapi->propGetNode(ret, "clip", 0, NULL);
-   vsapi->freeMap(ret);
-   vsapi->freeMap(args);
-   vsapi->propSetNode(out, "clip", tmpnode, paReplace);
-   vsapi->freeNode(tmpnode);
 }
 
 
@@ -554,9 +554,9 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegiste
    registerFunc("Bifrost",
                 "clip:clip;"
                 "altclip:clip:opt;"
-                "scenelumathresh:float:opt;"
+                "luma_thresh:float:opt;"
                 "variation:int:opt;"
-                "conservativemask:int:opt;"
+                "conservative_mask:int:opt;"
                 "interlaced:int:opt;"
                 "blockx:int:opt;"
                 "blocky:int:opt;",
