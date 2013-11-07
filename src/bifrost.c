@@ -275,13 +275,9 @@ static const VSFrameRef *VS_CC bifrostGetFrame(int n, int activationReason, void
 
       int blocks_x = d->vi->width / block_width;
       int blocks_y = d->vi->height / block_height;
-      int remainder_x = d->vi->width % block_width;
-      int remainder_y = d->vi->height % block_height;
 
-      int x, y;
-
-      for (y = 0; y < blocks_y; y++) {
-         for (x = 0; x < blocks_x; x++) {
+      for (int y = 0; y < blocks_y; y++) {
+         for (int x = 0; x < blocks_x; x++) {
             float ldprev = blockLumaDiff(srcp_y + block_width*x, srcc_y + block_width*x, block_width, block_height, stride_y);
             float ldnext = blockLumaDiff(srcc_y + block_width*x, srcn_y + block_width*x, block_width, block_height, stride_y);
             float ldprevprev = 0.0f;
