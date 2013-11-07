@@ -441,24 +441,115 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
    d.node = vsapi->propGetNode(in, "clip", 0, 0);
    d.vi = vsapi->getVideoInfo(d.node);
 
-   if (!isConstantFormat(d.vi) || d.vi->format->id != pfYUV420P8) {
-      vsapi->setError(out, "Bifrost: Only constant format YUV420P8 allowed.");
-      vsapi->freeNode(d.node);
-      return;
-   }
-
    d.altnode = vsapi->propGetNode(in, "altclip", 0, &err);
    if (err) {
       d.altnode = vsapi->cloneNodeRef(d.node);
    }
+   const VSVideoInfo *altvi = vsapi->getVideoInfo(d.altnode);;
 
-   // TODO: separatefields and weave right here
+   if (!isConstantFormat(d.vi) || !isConstantFormat(altvi) || d.vi->format->id != pfYUV420P8 || altvi->format->id != pfYUV420P8) {
+      vsapi->setError(out, "Bifrost: Only constant format YUV420P8 allowed.");
+      vsapi->freeNode(d.node);
+      vsapi->freeNode(d.altnode);
+      return;
+   }
+
+   if (d.vi->width != altvi->width ||
+       d.vi->height != altvi->height ||
+       d.vi->numFrames != altvi->numFrames) {
+
+      vsapi->setError(out, "Bifrost: The two input clips must have the same dimensions and length.");
+      vsapi->freeNode(d.node);
+      vsapi->freeNode(d.altnode);
+      return;
+   }
+
+   VSMap *args, *ret;
+   const char *error;
+   VSPlugin *stdPlugin = vsapi->getPluginByNs("std", core);
+
+   args = vsapi->createMap();
+
+   vsapi->propSetNode(args, "clip", d.node, paReplace);
+   vsapi->freeNode(d.node);
+   vsapi->propSetInt(args, "tff", 1, paReplace);
+   ret = vsapi->invoke(stdPlugin, "SeparateFields", args);
+   error = vsapi->getError(ret);
+   if (error) {
+      vsapi->setError(out, error);
+      vsapi->freeMap(args);
+      vsapi->freeMap(ret);
+      vsapi->freeNode(d.altnode);
+      return;
+   }
+   d.node = vsapi->propGetNode(ret, "clip", 0, NULL);
+   vsapi->freeMap(ret);
+
+   vsapi->clearMap(args);
+
+   vsapi->propSetNode(args, "clip", d.altnode, paReplace);
+   vsapi->freeNode(d.altnode);
+   vsapi->propSetInt(args, "tff", 1, paReplace);
+   ret = vsapi->invoke(stdPlugin, "SeparateFields", args);
+   error = vsapi->getError(ret);
+   if (error) {
+      vsapi->setError(out, error);
+      vsapi->freeMap(args);
+      vsapi->freeMap(ret);
+      vsapi->freeNode(d.node);
+      return;
+   }
+   d.altnode = vsapi->propGetNode(ret, "clip", 0, NULL);
+   vsapi->freeMap(ret);
+
+   d.vi = vsapi->getVideoInfo(d.node);
 
    data = malloc(sizeof(d));
    *data = d;
 
    vsapi->createFilter(in, out, "Bifrost", bifrostInit, bifrostGetFrame, bifrostFree, fmParallel, 0, data, core);
-   return;
+
+   VSNodeRef *tmpnode = vsapi->propGetNode(out, "clip", 0, NULL);
+
+   vsapi->clearMap(args);
+
+   vsapi->propSetNode(args, "clip", tmpnode, paReplace);
+   vsapi->freeNode(tmpnode);
+   vsapi->propSetInt(args, "tff", 1, paReplace);
+   ret = vsapi->invoke(stdPlugin, "DoubleWeave", args);
+   error = vsapi->getError(ret);
+   if (error) {
+      vsapi->setError(out, error);
+      vsapi->freeMap(args);
+      vsapi->freeMap(ret);
+      vsapi->freeNode(d.node);
+      vsapi->freeNode(d.altnode);
+      return;
+   }
+   tmpnode = vsapi->propGetNode(ret, "clip", 0, NULL);
+   vsapi->freeMap(ret);
+
+   vsapi->clearMap(args);
+
+   vsapi->propSetNode(args, "clip", tmpnode, paReplace);
+   vsapi->freeNode(tmpnode);
+   vsapi->propSetInt(args, "cycle", 2, paReplace);
+   vsapi->propSetInt(args, "offsets", 0, paReplace);
+   ret = vsapi->invoke(stdPlugin, "SelectEvery", args);
+   error = vsapi->getError(ret);
+   if (error) {
+      vsapi->setError(out, error);
+      vsapi->freeMap(args);
+      vsapi->freeMap(ret);
+      vsapi->freeNode(d.node);
+      vsapi->freeNode(d.altnode);
+      return;
+   }
+   tmpnode = vsapi->propGetNode(ret, "clip", 0, NULL);
+   vsapi->freeMap(ret);
+   vsapi->freeMap(args);
+   vsapi->propSetNode(out, "clip", tmpnode, paReplace);
+   vsapi->freeNode(tmpnode);
 }
 
 
