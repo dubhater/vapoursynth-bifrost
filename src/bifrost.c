@@ -460,7 +460,8 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
       return;
    }
 
-   VSMap *args, *ret;
+   VSMap *args = 0;
+   VSMap *ret;
    const char *error;
    VSPlugin *stdPlugin = vsapi->getPluginByNs("std", core);
 
