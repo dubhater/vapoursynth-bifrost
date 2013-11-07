@@ -439,18 +439,22 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
    }
    const VSVideoInfo *altvi = vsapi->getVideoInfo(d.altnode);;
 
-   if (!isConstantFormat(d.vi) || !isConstantFormat(altvi) || d.vi->format->id != pfYUV420P8 || altvi->format->id != pfYUV420P8) {
-      vsapi->setError(out, "Bifrost: Only constant format YUV420P8 allowed.");
+   if (!isConstantFormat(d.vi) ||
+       d.vi->format->colorFamily != cmYUV ||
+       d.vi->format->sampleType != stInteger ||
+       d.vi->format->bitsPerSample != 8) {
+      vsapi->setError(out, "Bifrost: Only constant format 8 bit integer YUV allowed.");
       vsapi->freeNode(d.node);
       vsapi->freeNode(d.altnode);
       return;
    }
 
-   if (d.vi->width != altvi->width ||
+   if (d.vi->format != altvi->format ||
+       d.vi->width != altvi->width ||
        d.vi->height != altvi->height ||
        d.vi->numFrames != altvi->numFrames) {
 
-      vsapi->setError(out, "Bifrost: The two input clips must have the same dimensions and length.");
+      vsapi->setError(out, "Bifrost: The two input clips must have the same format, dimensions and length.");
       vsapi->freeNode(d.node);
       vsapi->freeNode(d.altnode);
       return;
