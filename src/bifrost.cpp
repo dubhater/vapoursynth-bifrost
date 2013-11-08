@@ -1,6 +1,6 @@
 #include <stdint.h>
 //#include <stdio.h>
-#include <windows.h>
+#include <Windows.h>
 #include "avisynth.h"
 
 enum BlendDirection { bdNext, bdPrev, bdBoth };
@@ -8,20 +8,20 @@ enum BlendDirection { bdNext, bdPrev, bdBoth };
 class Bifrost : public GenericVideoFilter {
    int variation;
    int offset;
-   float scenelumathresh;
-   bool interlaced, conservativemask;
+   float luma_thresh;
+   bool interlaced, conservative_mask;
    int block_width, block_height, block_width_uv, block_height_uv;
    int blocks_x, blocks_y;
    float relativeframediff;
    PClip child2;
 
    public:
-      Bifrost(PClip _child, PClip _child2, float _scenelumathresh, int _variation, bool _conservativemask, bool _interlaced, int _block_width, int _block_height, IScriptEnvironment* env)
+      Bifrost(PClip _child, PClip _child2, float _luma_thresh, int _variation, bool _conservative_mask, bool _interlaced, int _block_width, int _block_height, IScriptEnvironment* env)
       : GenericVideoFilter(_child)
       , child2(_child2)
-      , scenelumathresh(_scenelumathresh)
+      , luma_thresh(_luma_thresh)
       , variation(_variation)
-      , conservativemask(_conservativemask)
+      , conservative_mask(_conservative_mask)
       , block_width(_block_width)
       , block_height(_block_height) {
 
@@ -111,7 +111,7 @@ void applyBlockRainbowMask(const uint8_t *srcp_u, const uint8_t *srcp_v,
 
 
 void processBlockRainbowMask(uint8_t *dst_u, uint8_t *dst_v,
-                             int block_width_uv, int block_height_uv, int dst_stride_uv, bool conservativemask) {
+                             int block_width_uv, int block_height_uv, int dst_stride_uv, bool conservative_mask) {
 
    // Maybe needed later.
    uint8_t *tmp = dst_v;
@@ -129,7 +129,7 @@ void processBlockRainbowMask(uint8_t *dst_u, uint8_t *dst_v,
    }
 
    //expand mask vertically
-   if (!conservativemask) {
+   if (!conservative_mask) {
       dst_v = tmp;
 
       for (int x = 0; x < block_width_uv; x++) {
@@ -302,22 +302,22 @@ PVideoFrame __stdcall Bifrost::GetFrame(int n, IScriptEnvironment* env) {
          float ldnextnext = 0.0f;
 
          //too much movement in both directions?
-         if (ldnext > scenelumathresh && ldprev > scenelumathresh) {
+         if (ldnext > luma_thresh && ldprev > luma_thresh) {
             copyChromaBlock(dst_u + block_width_uv*x, dst_v + block_width_uv*x,
                             altsrcc_u + block_width_uv*x, altsrcc_v + block_width_uv*x,
                             block_width_uv, block_height_uv, dst_pitch_uv, altsrcc_pitch_uv);
             continue;
          }
 
-         if (ldnext > scenelumathresh) {
+         if (ldnext > luma_thresh) {
             ldprevprev = blockLumaDiff(srcpp_y + block_width*x, srcp_y + block_width*x, block_width, block_height, srcpp_pitch_y, srcp_pitch_y);
-         } else if (ldprev > scenelumathresh) {
+         } else if (ldprev > luma_thresh) {
             ldnextnext = blockLumaDiff(srcn_y + block_width*x, srcnn_y + block_width*x, block_width, block_height, srcn_pitch_y, srcnn_pitch_y);
          }
 
          //two consecutive frames in one direction to generate mask?
-         if ((ldnext > scenelumathresh && ldprevprev > scenelumathresh) ||
-             (ldprev > scenelumathresh && ldnextnext > scenelumathresh)) {
+         if ((ldnext > luma_thresh && ldprevprev > luma_thresh) ||
+             (ldprev > luma_thresh && ldnextnext > luma_thresh)) {
             copyChromaBlock(dst_u + block_width_uv*x, dst_v + block_width_uv*x,
                             altsrcc_u + block_width_uv*x, altsrcc_v + block_width_uv*x,
                             block_width_uv, block_height_uv, dst_pitch_uv, altsrcc_pitch_uv);
@@ -325,7 +325,7 @@ PVideoFrame __stdcall Bifrost::GetFrame(int n, IScriptEnvironment* env) {
          }
 
          //generate mask from correct side of scenechange
-         if (ldnext > scenelumathresh) {
+         if (ldnext > luma_thresh) {
             makeBlockRainbowMask(srcpp_u + block_width_uv*x, srcpp_v + block_width_uv*x,
                                   srcp_u + block_width_uv*x,  srcp_v + block_width_uv*x,
                                   srcc_u + block_width_uv*x,  srcc_v + block_width_uv*x,
@@ -333,7 +333,7 @@ PVideoFrame __stdcall Bifrost::GetFrame(int n, IScriptEnvironment* env) {
                                  block_width_uv, block_height_uv,
                                  srcpp_pitch_uv, srcp_pitch_uv, srcc_pitch_uv, dst_pitch_uv,
                                  variation);
-         } else if (ldprev > scenelumathresh) {
+         } else if (ldprev > luma_thresh) {
             makeBlockRainbowMask( srcc_u + block_width_uv*x,  srcc_v + block_width_uv*x,
                                   srcn_u + block_width_uv*x,  srcn_v + block_width_uv*x,
                                  srcnn_u + block_width_uv*x, srcnn_v + block_width_uv*x,
@@ -353,7 +353,7 @@ PVideoFrame __stdcall Bifrost::GetFrame(int n, IScriptEnvironment* env) {
 
          //denoise and expand mask
          processBlockRainbowMask(dst_u + block_width_uv*x, dst_v + block_width_uv*x,
-                                 block_width_uv, block_height_uv, dst_pitch_uv, conservativemask);
+                                 block_width_uv, block_height_uv, dst_pitch_uv, conservative_mask);
 
          //determine direction to blend in
          BlendDirection direction;
@@ -422,7 +422,7 @@ AVSValue __cdecl Create_Bifrost(AVSValue args, void* user_data, IScriptEnvironme
 
 extern "C" __declspec(dllexport) const char* __stdcall AvisynthPluginInit2(IScriptEnvironment* env)
 {
-   env->AddFunction("Bifrost20", "c[altclip]c[scenelumathresh]f[variation]i[conservativemask]b[interlaced]b[blockx]i[blocky]i", Create_Bifrost, 0);
+   env->AddFunction("Bifrost", "c[altclip]c[luma_thresh]f[variation]i[conservative_mask]b[interlaced]b[blockx]i[blocky]i", Create_Bifrost, 0);
    return 0;
 };
 
