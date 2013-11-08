@@ -414,9 +414,9 @@ AVSValue __cdecl Create_Bifrost(AVSValue args, void* user_data, IScriptEnvironme
 
    if (args[5].AsBool(true)) {
       InClip = env->Invoke("SeparateFields", InClip).AsClip();
-      return env->Invoke("Weave", new Bifrost(env->Invoke("SeparateFields", args[0].AsClip()).AsClip(), InClip, (float)args[2].AsFloat(3.0), args[3].AsInt(5), args[4].AsBool(false), true, args[6].AsInt(4), args[7].AsInt(4), env));
+      return env->Invoke("Weave", new Bifrost(env->Invoke("SeparateFields", args[0].AsClip()).AsClip(), InClip, (float)args[2].AsFloat(10.0), args[3].AsInt(5), args[4].AsBool(false), true, args[6].AsInt(4), args[7].AsInt(4), env));
    } else {
-      return new Bifrost(args[0].AsClip(), InClip, (float)args[2].AsFloat(1.5), args[3].AsInt(5), args[4].AsBool(false), false, args[6].AsInt(4), args[7].AsInt(4), env);
+      return new Bifrost(args[0].AsClip(), InClip, (float)args[2].AsFloat(10.0), args[3].AsInt(5), args[4].AsBool(false), false, args[6].AsInt(4), args[7].AsInt(4), env);
    }
 }
 
