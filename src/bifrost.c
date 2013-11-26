@@ -1,5 +1,5 @@
 #include <stdint.h>
-//#include <stdlib.h>
+#include <stdlib.h>
 //#include <string.h>
 
 #include <VapourSynth.h>
@@ -238,22 +238,34 @@ static const VSFrameRef *VS_CC bifrostGetFrame(int n, int activationReason, void
       const VSFrameRef *planeSrc[3] = { srcc, NULL, NULL };
       const int planes[3] = { 0 };
       VSFrameRef *dst = vsapi->newVideoFrame2(d->vi->format, d->vi->width, d->vi->height, planeSrc, planes, srcc, core);
+      VSMap *dst_props = vsapi->getFramePropsRW(dst);
+      const char *prop = "BifrostLumaDiff";
+      vsapi->propDeleteKey(dst_props, prop);
+
 
       const uint8_t *srcpp_y = vsapi->getReadPtr(srcpp, 0);
       const uint8_t *srcpp_u = vsapi->getReadPtr(srcpp, 1);
       const uint8_t *srcpp_v = vsapi->getReadPtr(srcpp, 2);
+      const VSMap *srcpp_props = vsapi->getFramePropsRO(srcpp);
+      const int *srcpp_diffs = (const int *)vsapi->propGetData(srcpp_props, prop, 0, NULL);
 
       const uint8_t *srcp_y = vsapi->getReadPtr(srcp, 0);
       const uint8_t *srcp_u = vsapi->getReadPtr(srcp, 1);
       const uint8_t *srcp_v = vsapi->getReadPtr(srcp, 2);
+      const VSMap *srcp_props = vsapi->getFramePropsRO(srcp);
+      const int *srcp_diffs = (const int *)vsapi->propGetData(srcp_props, prop, 0, NULL);
 
       const uint8_t *srcc_y = vsapi->getReadPtr(srcc, 0);
       const uint8_t *srcc_u = vsapi->getReadPtr(srcc, 1);
       const uint8_t *srcc_v = vsapi->getReadPtr(srcc, 2);
+      const VSMap *srcc_props = vsapi->getFramePropsRO(srcc);
+      const int *srcc_diffs = (const int *)vsapi->propGetData(srcc_props, prop, 0, NULL);
 
       const uint8_t *srcn_y = vsapi->getReadPtr(srcn, 0);
       const uint8_t *srcn_u = vsapi->getReadPtr(srcn, 1);
       const uint8_t *srcn_v = vsapi->getReadPtr(srcn, 2);
+      const VSMap *srcn_props = vsapi->getFramePropsRO(srcn);
+      const int *srcn_diffs = (const int *)vsapi->propGetData(srcn_props, prop, 0, NULL);
 
       const uint8_t *srcnn_y = vsapi->getReadPtr(srcnn, 0);
       const uint8_t *srcnn_u = vsapi->getReadPtr(srcnn, 1);
@@ -278,8 +290,9 @@ static const VSFrameRef *VS_CC bifrostGetFrame(int n, int activationReason, void
 
       for (int y = 0; y < blocks_y; y++) {
          for (int x = 0; x < blocks_x; x++) {
-            float ldprev = blockLumaDiff(srcp_y + block_width*x, srcc_y + block_width*x, block_width, block_height, stride_y);
-            float ldnext = blockLumaDiff(srcc_y + block_width*x, srcn_y + block_width*x, block_width, block_height, stride_y);
+            int current_block = y*blocks_x + x;
+            float ldprev = srcp_diffs[current_block];
+            float ldnext = srcc_diffs[current_block];
             float ldprevprev = 0.0f;
             float ldnextnext = 0.0f;
 
@@ -292,9 +305,9 @@ static const VSFrameRef *VS_CC bifrostGetFrame(int n, int activationReason, void
             }
 
             if (ldnext > d->luma_thresh) {
-               ldprevprev = blockLumaDiff(srcpp_y + block_width*x, srcp_y + block_width*x, block_width, block_height, stride_y);
+               ldprevprev = srcpp_diffs[current_block];
             } else if (ldprev > d->luma_thresh) {
-               ldnextnext = blockLumaDiff(srcn_y + block_width*x, srcnn_y + block_width*x, block_width, block_height, stride_y);
+               ldnextnext = srcn_diffs[current_block];
             }
 
             //two consecutive frames in one direction to generate mask?
@@ -501,9 +514,66 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
       }
       d.altnode = vsapi->propGetNode(ret, "clip", 0, NULL);
       vsapi->freeMap(ret);
-
-      d.vi = vsapi->getVideoInfo(d.node);
    }
+
+   vsapi->clearMap(args);
+   vsapi->propSetNode(args, "clip", d.node, paReplace);
+   vsapi->freeNode(d.node);
+   
+   ret = vsapi->invoke(stdPlugin, "Cache", args);
+   error = vsapi->getError(ret);
+   if (error) {
+      vsapi->setError(out, error);
+      vsapi->freeMap(args);
+      vsapi->freeMap(ret);
+      vsapi->freeNode(d.node);
+      vsapi->freeNode(d.altnode);
+      return;
+   }
+   d.node = vsapi->propGetNode(ret, "clip", 0, NULL);
+   vsapi->freeMap(ret);
+
+   vsapi->clearMap(args);
+
+   vsapi->propSetNode(args, "clip", d.node, paReplace);
+   vsapi->freeNode(d.node);
+   vsapi->propSetInt(args, "interlaced", d.interlaced, paReplace);
+   vsapi->propSetInt(args, "blockx", d.block_width, paReplace);
+   vsapi->propSetInt(args, "blocky", d.block_height, paReplace);
+
+   VSPlugin *bifrostPlugin = vsapi->getPluginByNs("bifrost", core);
+   ret = vsapi->invoke(bifrostPlugin, "BlockDiff", args);
+   error = vsapi->getError(ret);
+   if (error) {
+      vsapi->setError(out, error);
+      vsapi->freeMap(args);
+      vsapi->freeMap(ret);
+      vsapi->freeNode(d.node);
+      vsapi->freeNode(d.altnode);
+      return;
+   }
+   d.node = vsapi->propGetNode(ret, "clip", 0, NULL);
+   vsapi->freeMap(ret);
+
+   vsapi->clearMap(args);
+   vsapi->propSetNode(args, "clip", d.node, paReplace);
+   vsapi->freeNode(d.node);
+   
+   ret = vsapi->invoke(stdPlugin, "Cache", args);
+   error = vsapi->getError(ret);
+   if (error) {
+      vsapi->setError(out, error);
+      vsapi->freeMap(args);
+      vsapi->freeMap(ret);
+      vsapi->freeNode(d.node);
+      vsapi->freeNode(d.altnode);
+      return;
+   }
+   d.node = vsapi->propGetNode(ret, "clip", 0, NULL);
+   vsapi->freeMap(ret);
+
+   d.vi = vsapi->getVideoInfo(d.node);
+
 
    data = malloc(sizeof(d));
    *data = d;
@@ -556,6 +626,126 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
 }
 
 
+typedef struct {
+   VSNodeRef *node;
+   int interlaced;
+   int block_width;
+   int block_height;
+
+   const VSVideoInfo *vi;
+   int offset;
+} BlockDiffData;
+
+
+static void VS_CC blockDiffInit(VSMap *in, VSMap *out, void **instanceData, VSNode *node, VSCore *core, const VSAPI *vsapi) {
+   BlockDiffData *d = (BlockDiffData *) * instanceData;
+   vsapi->setVideoInfo(d->vi, 1, node);
+
+   d->offset = d->interlaced ? 2 : 1;
+}
+
+
+static const VSFrameRef *VS_CC blockDiffGetFrame(int n, int activationReason, void **instanceData, void **frameData, VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi) {
+   BlockDiffData *d = (BlockDiffData *) * instanceData;
+
+#define min(a, b)  (((a) < (b)) ? (a) : (b))
+#define max(a, b)  (((a) > (b)) ? (a) : (b))
+   if (activationReason == arInitial) {
+      vsapi->requestFrameFilter(n, d->node, frameCtx);
+      vsapi->requestFrameFilter(min(n + d->offset, d->vi->numFrames-1), d->node, frameCtx);
+   } else if (activationReason == arAllFramesReady) {
+      const VSFrameRef *srcc = vsapi->getFrameFilter(n, d->node, frameCtx);
+      const VSFrameRef *srcn = vsapi->getFrameFilter(min(n + d->offset, d->vi->numFrames-1), d->node, frameCtx);
+#undef min
+#undef max
+
+      VSFrameRef *dst = vsapi->copyFrame(srcc, core);
+
+      VSMap *props = vsapi->getFramePropsRW(dst);
+
+      const uint8_t *srcc_y = vsapi->getReadPtr(srcc, 0);
+      const uint8_t *srcn_y = vsapi->getReadPtr(srcn, 0);
+
+      int stride_y = vsapi->getStride(srcc, 0);
+
+      int block_width = d->block_width;
+      int block_height = d->block_height;
+
+      int blocks_x = d->vi->width / block_width;
+      int blocks_y = d->vi->height / block_height;
+
+      void *diffs = malloc(blocks_x * blocks_y * sizeof(int));
+
+      for (int y = 0; y < blocks_y; y++) {
+         for (int x = 0; x < blocks_x; x++) {
+            ((int *)diffs)[y*blocks_x+x] = blockLumaDiff(srcc_y + block_width*x, srcn_y + block_width*x, block_width, block_height, stride_y);
+         }
+
+         srcc_y += block_height * stride_y;
+         srcn_y += block_height * stride_y;
+      }
+
+      vsapi->propSetData(props, "BifrostLumaDiff", (const char *)diffs, blocks_x * blocks_y * sizeof(int), paReplace);
+      free(diffs);
+
+      vsapi->freeFrame(srcc);
+      vsapi->freeFrame(srcn);
+
+      return dst;
+   }
+
+   return 0;
+}
+
+
+static void VS_CC blockDiffFree(void *instanceData, VSCore *core, const VSAPI *vsapi) {
+   BlockDiffData *d = (BlockDiffData *)instanceData;
+
+   vsapi->freeNode(d->node);
+   free(d);
+}
+
+
+static void VS_CC blockDiffCreate(const VSMap *in, VSMap *out, void *userData, VSCore *core, const VSAPI *vsapi) {
+   BlockDiffData d;
+   BlockDiffData *data;
+   int err;
+
+   d.interlaced = !!vsapi->propGetInt(in, "interlaced", 0, &err);
+   if (err) {
+      d.interlaced = 1;
+   }
+
+   d.block_width = vsapi->propGetInt(in, "blockx", 0, &err);
+   if (err) {
+      d.block_width = 4;
+   }
+
+   d.block_height = vsapi->propGetInt(in, "blocky", 0, &err);
+   if (err) {
+      d.block_height = 4;
+   }
+
+   d.node = vsapi->propGetNode(in, "clip", 0, 0);
+   d.vi = vsapi->getVideoInfo(d.node);
+
+   if (!isConstantFormat(d.vi) ||
+       d.vi->format->colorFamily != cmYUV ||
+       d.vi->format->sampleType != stInteger ||
+       d.vi->format->bitsPerSample != 8) {
+      vsapi->setError(out, "Bifrost: Only constant format 8 bit integer YUV allowed.");
+      vsapi->freeNode(d.node);
+      return;
+   }
+
+
+   data = malloc(sizeof(d));
+   *data = d;
+
+   vsapi->createFilter(in, out, "BlockDiff", blockDiffInit, blockDiffGetFrame, blockDiffFree, fmParallel, 0, data, core);
+}
+
+
 VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
    configFunc("com.nodame.bifrost", "bifrost", "Bifrost plugin for VapourSynth", VAPOURSYNTH_API_VERSION, 1, plugin);
    registerFunc("Bifrost",
@@ -568,4 +758,10 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegiste
                 "blockx:int:opt;"
                 "blocky:int:opt;",
                 bifrostCreate, 0, plugin);
+   registerFunc("BlockDiff",
+                "clip:clip;"
+                "interlaced:int:opt;"
+                "blockx:int:opt;"
+                "blocky:int:opt;",
+                blockDiffCreate, 0, plugin);
 }
