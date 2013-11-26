@@ -194,7 +194,7 @@ static void copyChromaBlock(uint8_t *dst_u, uint8_t *dst_v,
 }
 
 
-static float blockLumaDiff(const uint8_t *src1_y, const uint8_t *src2_y, int block_width, int block_height, int stride_y) {
+static int blockLumaDiff(const uint8_t *src1_y, const uint8_t *src2_y, int block_width, int block_height, int stride_y) {
    int diff = 0;
 
    for (int y = 0; y < block_height; y++) {
@@ -206,7 +206,7 @@ static float blockLumaDiff(const uint8_t *src1_y, const uint8_t *src2_y, int blo
       src2_y += stride_y;
    }
 
-   return (float)diff / (block_width * block_height);
+   return diff;
 }
 
 
@@ -429,6 +429,8 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
    if (err) {
       d.block_height = 4;
    }
+
+   d.luma_thresh = d.luma_thresh * d.block_width * d.block_height;
 
    d.node = vsapi->propGetNode(in, "clip", 0, 0);
    d.vi = vsapi->getVideoInfo(d.node);
