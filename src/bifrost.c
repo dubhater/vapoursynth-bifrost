@@ -478,7 +478,7 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
    VSMap *args = 0;
    VSMap *ret;
    const char *error;
-   VSPlugin *stdPlugin = vsapi->getPluginByNs("std", core);
+   VSPlugin *stdPlugin = vsapi->getPluginById("com.vapoursynth.std", core);
 
    if (d.interlaced) {
       args = vsapi->createMap();
@@ -541,7 +541,7 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
    vsapi->propSetInt(args, "blockx", d.block_width, paReplace);
    vsapi->propSetInt(args, "blocky", d.block_height, paReplace);
 
-   VSPlugin *bifrostPlugin = vsapi->getPluginByNs("bifrost", core);
+   VSPlugin *bifrostPlugin = vsapi->getPluginById("com.nodame.bifrost", core);
    ret = vsapi->invoke(bifrostPlugin, "BlockDiff", args);
    error = vsapi->getError(ret);
    if (error) {
