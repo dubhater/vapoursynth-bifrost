@@ -22,6 +22,10 @@ typedef struct {
    int interlaced;
    int block_width;
    int block_height;
+   int block_width_uv;
+   int block_height_uv;
+   int blocks_x;
+   int blocks_y;
 
    const VSVideoInfo *vi;
    float relativeframediff;
@@ -32,9 +36,6 @@ typedef struct {
 static void VS_CC bifrostInit(VSMap *in, VSMap *out, void **instanceData, VSNode *node, VSCore *core, const VSAPI *vsapi) {
    BifrostData *d = (BifrostData *) * instanceData;
    vsapi->setVideoInfo(d->vi, 1, node);
-
-   d->relativeframediff = 1.2f;
-   d->offset = d->interlaced ? 2 : 1;
 }
 
 
@@ -280,13 +281,12 @@ static const VSFrameRef *VS_CC bifrostGetFrame(int n, int activationReason, void
       int stride_y = vsapi->getStride(srcc, 0);
       int stride_uv = vsapi->getStride(srcc, 1);
 
-      int block_width = d->block_width;
       int block_height = d->block_height;
-      int block_width_uv = block_width >> d->vi->format->subSamplingW;
-      int block_height_uv = block_height >> d->vi->format->subSamplingH;
+      int block_width_uv = d->block_width_uv;
+      int block_height_uv = d->block_height_uv;
 
-      int blocks_x = d->vi->width / block_width;
-      int blocks_y = d->vi->height / block_height;
+      int blocks_x = d->blocks_x;
+      int blocks_y = d->blocks_y;
 
       for (int y = 0; y < blocks_y; y++) {
          for (int x = 0; x < blocks_x; x++) {
@@ -426,6 +426,10 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
       d.interlaced = 1;
    }
 
+   d.offset = d.interlaced ? 2 : 1;
+
+   d.relativeframediff = 1.2f;
+
    d.luma_thresh = (float)vsapi->propGetFloat(in, "luma_thresh", 0, &err);
    if (err) {
       d.luma_thresh = 10.0f;
@@ -452,7 +456,7 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
    if (err) {
       d.altnode = vsapi->cloneNodeRef(d.node);
    }
-   const VSVideoInfo *altvi = vsapi->getVideoInfo(d.altnode);;
+   const VSVideoInfo *altvi = vsapi->getVideoInfo(d.altnode);
 
    if (!isConstantFormat(d.vi) ||
        d.vi->format->colorFamily != cmYUV ||
@@ -574,6 +578,29 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
 
    d.vi = vsapi->getVideoInfo(d.node);
 
+   if (d.block_width % (1 << d.vi->format->subSamplingW) ||
+       d.block_height % (1 << d.vi->format->subSamplingH)) {
+      vsapi->setError(out, "Bifrost: The requested block size is incompatible with the clip's subsampling.");
+      vsapi->freeMap(args);
+      vsapi->freeNode(d.node);
+      vsapi->freeNode(d.altnode);
+      return;
+   }
+
+   d.block_width_uv = d.block_width >> d.vi->format->subSamplingW;
+   d.block_height_uv = d.block_height >> d.vi->format->subSamplingH;
+
+   if (d.block_width_uv < 2 || d.block_height_uv < 2) {
+      vsapi->setError(out, "Bifrost: The requested block size is too small.");
+      vsapi->freeMap(args);
+      vsapi->freeNode(d.node);
+      vsapi->freeNode(d.altnode);
+      return;
+   }
+
+   d.blocks_x = d.vi->width / d.block_width;
+   d.blocks_y = d.vi->height / d.block_height;
+
 
    data = malloc(sizeof(d));
    *data = d;
@@ -631,6 +658,8 @@ typedef struct {
    int interlaced;
    int block_width;
    int block_height;
+   int blocks_x;
+   int blocks_y;
 
    const VSVideoInfo *vi;
    int offset;
@@ -640,8 +669,6 @@ typedef struct {
 static void VS_CC blockDiffInit(VSMap *in, VSMap *out, void **instanceData, VSNode *node, VSCore *core, const VSAPI *vsapi) {
    BlockDiffData *d = (BlockDiffData *) * instanceData;
    vsapi->setVideoInfo(d->vi, 1, node);
-
-   d->offset = d->interlaced ? 2 : 1;
 }
 
 
@@ -671,8 +698,8 @@ static const VSFrameRef *VS_CC blockDiffGetFrame(int n, int activationReason, vo
       int block_width = d->block_width;
       int block_height = d->block_height;
 
-      int blocks_x = d->vi->width / block_width;
-      int blocks_y = d->vi->height / block_height;
+      int blocks_x = d->blocks_x;
+      int blocks_y = d->blocks_y;
 
       void *diffs = malloc(blocks_x * blocks_y * sizeof(int));
 
@@ -716,6 +743,8 @@ static void VS_CC blockDiffCreate(const VSMap *in, VSMap *out, void *userData, V
       d.interlaced = 1;
    }
 
+   d.offset = d.interlaced ? 2 : 1;
+
    d.block_width = vsapi->propGetInt(in, "blockx", 0, &err);
    if (err) {
       d.block_width = 4;
@@ -728,6 +757,9 @@ static void VS_CC blockDiffCreate(const VSMap *in, VSMap *out, void *userData, V
 
    d.node = vsapi->propGetNode(in, "clip", 0, 0);
    d.vi = vsapi->getVideoInfo(d.node);
+
+   d.blocks_x = d.vi->width / d.block_width;
+   d.blocks_y = d.vi->height / d.block_height;
 
    if (!isConstantFormat(d.vi) ||
        d.vi->format->colorFamily != cmYUV ||
