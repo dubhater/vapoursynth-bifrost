@@ -479,14 +479,12 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
       return;
    }
 
-   VSMap *args = 0;
+   VSMap *args = vsapi->createMap();
    VSMap *ret;
    const char *error;
    VSPlugin *stdPlugin = vsapi->getPluginById("com.vapoursynth.std", core);
 
    if (d.interlaced) {
-      args = vsapi->createMap();
-
       vsapi->propSetNode(args, "clip", d.node, paReplace);
       vsapi->freeNode(d.node);
       vsapi->propSetInt(args, "tff", 1, paReplace);
