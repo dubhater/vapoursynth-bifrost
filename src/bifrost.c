@@ -640,10 +640,11 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
       }
       tmpnode = vsapi->propGetNode(ret, "clip", 0, NULL);
       vsapi->freeMap(ret);
-      vsapi->freeMap(args);
       vsapi->propSetNode(out, "clip", tmpnode, paReplace);
       vsapi->freeNode(tmpnode);
    }
+
+   vsapi->freeMap(args);
 }
 
 
