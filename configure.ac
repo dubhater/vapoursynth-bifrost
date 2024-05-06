@@ -1,4 +1,4 @@
-AC_INIT([Bifrost], [2.0], [https://github.com/dubhater/vapoursynth-bifrost/issues], [bifrost], [https://github.com/dubhater/vapoursynth-bifrost/])
+AC_INIT([Bifrost], [3.0], [https://github.com/dubhater/vapoursynth-bifrost/issues], [bifrost], [https://github.com/dubhater/vapoursynth-bifrost/])
 
 : ${CFLAGS="-O2"}
 
