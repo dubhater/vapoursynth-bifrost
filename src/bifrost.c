@@ -410,35 +410,30 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
    int err;
 
    d.variation = vsapi->mapGetIntSaturated(in, "variation", 0, &err);
-   if (err) {
+   if (err)
       d.variation = 5;
-   }
 
    d.interlaced = !!vsapi->mapGetInt(in, "interlaced", 0, &err);
-   if (err) {
+   if (err)
       d.interlaced = 1;
-   }
 
    d.offset = d.interlaced ? 2 : 1;
 
    d.relativeframediff = 1.2f;
 
    d.luma_thresh = vsapi->mapGetFloatSaturated(in, "luma_thresh", 0, &err);
-   if (err) {
+   if (err)
       d.luma_thresh = 10.0f;
-   }
 
    d.conservative_mask = !!vsapi->mapGetInt(in, "conservative_mask", 0, &err);
 
    d.block_width = vsapi->mapGetIntSaturated(in, "blockx", 0, &err);
-   if (err) {
+   if (err)
       d.block_width = 4;
-   }
 
    d.block_height = vsapi->mapGetIntSaturated(in, "blocky", 0, &err);
-   if (err) {
+   if (err)
       d.block_height = 4;
-   }
 
    d.luma_thresh = d.luma_thresh * d.block_width * d.block_height;
 
@@ -446,6 +441,7 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
    d.vi = vsapi->getVideoInfo(d.node);
 
    d.altnode = vsapi->mapGetNode(in, "altclip", 0, &err);
+   int altnodeIsSame = err;
    if (err)
       d.altnode = vsapi->addNodeRef(d.node);
 
@@ -471,18 +467,17 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
    }
 
    VSMap *args = vsapi->createMap();
-   VSMap *ret;
-   const char *error;
-   VSPlugin *stdPlugin = vsapi->getPluginByID("com.vapoursynth.std", core);
+   VSMap *ret = NULL;
+   VSPlugin *stdPlugin = vsapi->getPluginByID(VSH_STD_PLUGIN_ID, core);
 
    if (d.interlaced) {
       vsapi->mapSetInt(args, "tff", 1, maReplace);
       vsapi->mapConsumeNode(args, "clip", d.node, maReplace);
+      d.node = NULL;
 
       ret = vsapi->invoke(stdPlugin, "SeparateFields", args);
-      error = vsapi->mapGetError(ret);
-      if (error) {
-         vsapi->mapSetError(out, error);
+      if (vsapi->mapGetError(ret)) {
+         vsapi->mapSetError(out, vsapi->mapGetError(ret));
          vsapi->freeMap(args);
          vsapi->freeMap(ret);
          vsapi->freeNode(d.altnode);
@@ -490,33 +485,40 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
       }
       d.node = vsapi->mapGetNode(ret, "clip", 0, NULL);
       vsapi->freeMap(ret);
+      ret = NULL;
 
-      vsapi->mapConsumeNode(args, "clip", d.altnode, maReplace);
-      ret = vsapi->invoke(stdPlugin, "SeparateFields", args);
-      error = vsapi->mapGetError(ret);
-      if (error) {
-         vsapi->mapSetError(out, error);
-         vsapi->freeMap(args);
-         vsapi->freeMap(ret);
-         vsapi->freeNode(d.node);
-         return;
+      if (altnodeIsSame) {
+          vsapi->freeNode(d.altnode);
+          d.altnode = vsapi->addNodeRef(d.node);
+      } else {
+          vsapi->mapConsumeNode(args, "clip", d.altnode, maReplace);
+          d.altnode = NULL;
+          ret = vsapi->invoke(stdPlugin, "SeparateFields", args);
+          if (vsapi->mapGetError(ret)) {
+              vsapi->mapSetError(out, vsapi->mapGetError(ret));
+              vsapi->freeMap(args);
+              vsapi->freeMap(ret);
+              vsapi->freeNode(d.node);
+              return;
+          }
+          d.altnode = vsapi->mapGetNode(ret, "clip", 0, NULL);
+          vsapi->freeMap(ret);
+          ret = NULL;
       }
-      d.altnode = vsapi->mapGetNode(ret, "clip", 0, NULL);
-      vsapi->freeMap(ret);
+
+      vsapi->clearMap(args);
    }
 
-   vsapi->clearMap(args);
-
    vsapi->mapConsumeNode(args, "clip", d.node, maReplace);
+   d.node = NULL;
    vsapi->mapSetInt(args, "interlaced", d.interlaced, maReplace);
    vsapi->mapSetInt(args, "blockx", d.block_width, maReplace);
    vsapi->mapSetInt(args, "blocky", d.block_height, maReplace);
 
    VSPlugin *bifrostPlugin = vsapi->getPluginByID("com.nodame.bifrost", core);
    ret = vsapi->invoke(bifrostPlugin, "BlockDiff", args);
-   error = vsapi->mapGetError(ret);
-   if (error) {
-      vsapi->mapSetError(out, error);
+   if (vsapi->mapGetError(ret)) {
+      vsapi->mapSetError(out, vsapi->mapGetError(ret));
       vsapi->freeMap(args);
       vsapi->freeMap(ret);
       vsapi->freeNode(d.altnode);
@@ -524,6 +526,7 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
    }
    d.node = vsapi->mapGetNode(ret, "clip", 0, NULL);
    vsapi->freeMap(ret);
+   ret = NULL;
    vsapi->clearMap(args);
 
    d.vi = vsapi->getVideoInfo(d.node);
@@ -563,9 +566,8 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
       vsapi->mapSetInt(args, "tff", 1, maReplace);
       vsapi->mapConsumeNode(args, "clip", vsapi->mapGetNode(out, "clip", 0, NULL), maReplace);
       ret = vsapi->invoke(stdPlugin, "DoubleWeave", args);
-      error = vsapi->mapGetError(ret);
-      if (error) {
-         vsapi->mapSetError(out, error);
+      if (vsapi->mapGetError(ret)) {
+         vsapi->mapSetError(out, vsapi->mapGetError(ret));
          vsapi->freeMap(args);
          vsapi->freeMap(ret);
          return;
@@ -576,17 +578,18 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
       vsapi->mapSetInt(args, "offsets", 0, maReplace);
       vsapi->mapConsumeNode(args, "clip", vsapi->mapGetNode(ret, "clip", 0, NULL), maReplace);
       vsapi->freeMap(ret);
+      ret = NULL;
 
       ret = vsapi->invoke(stdPlugin, "SelectEvery", args);
-      error = vsapi->mapGetError(ret);
-      if (error) {
-         vsapi->mapSetError(out, error);
+      if (vsapi->mapGetError(ret)) {
+         vsapi->mapSetError(out, vsapi->mapGetError(ret));
          vsapi->freeMap(args);
          vsapi->freeMap(ret);
          return;
       }
       vsapi->mapConsumeNode(out, "clip", vsapi->mapGetNode(ret, "clip", 0, NULL), maReplace);
       vsapi->freeMap(ret);
+      ret = NULL;
    }
 
    vsapi->freeMap(args);
