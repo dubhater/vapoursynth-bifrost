@@ -403,6 +403,25 @@ static void VS_CC bifrostFree(void *instanceData, VSCore *core, const VSAPI *vsa
    free(d);
 }
 
+#define BIFROST_CHECK_ERROR1 do {\
+    if (vsapi->mapGetError(ret)) {\
+        vsapi->mapSetError(out, vsapi->mapGetError(ret));\
+        vsapi->freeMap(args);\
+        vsapi->freeMap(ret);\
+        vsapi->freeNode(d.node);\
+        vsapi->freeNode(d.altnode);\
+        return;\
+    }\
+} while (0);
+
+#define BIFROST_CHECK_ERROR2 do {\
+    if (vsapi->mapGetError(ret)) {\
+        vsapi->mapSetError(out, vsapi->mapGetError(ret));\
+        vsapi->freeMap(args);\
+        vsapi->freeMap(ret);\
+        return;\
+    }\
+} while (0);
 
 static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSCore *core, const VSAPI *vsapi) {
    BifrostData d;
@@ -476,13 +495,7 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
       d.node = NULL;
 
       ret = vsapi->invoke(stdPlugin, "SeparateFields", args);
-      if (vsapi->mapGetError(ret)) {
-         vsapi->mapSetError(out, vsapi->mapGetError(ret));
-         vsapi->freeMap(args);
-         vsapi->freeMap(ret);
-         vsapi->freeNode(d.altnode);
-         return;
-      }
+      BIFROST_CHECK_ERROR1
       d.node = vsapi->mapGetNode(ret, "clip", 0, NULL);
       vsapi->freeMap(ret);
       ret = NULL;
@@ -494,13 +507,7 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
           vsapi->mapConsumeNode(args, "clip", d.altnode, maReplace);
           d.altnode = NULL;
           ret = vsapi->invoke(stdPlugin, "SeparateFields", args);
-          if (vsapi->mapGetError(ret)) {
-              vsapi->mapSetError(out, vsapi->mapGetError(ret));
-              vsapi->freeMap(args);
-              vsapi->freeMap(ret);
-              vsapi->freeNode(d.node);
-              return;
-          }
+          BIFROST_CHECK_ERROR1
           d.altnode = vsapi->mapGetNode(ret, "clip", 0, NULL);
           vsapi->freeMap(ret);
           ret = NULL;
@@ -517,13 +524,7 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
 
    VSPlugin *bifrostPlugin = vsapi->getPluginByID("com.nodame.bifrost", core);
    ret = vsapi->invoke(bifrostPlugin, "BlockDiff", args);
-   if (vsapi->mapGetError(ret)) {
-      vsapi->mapSetError(out, vsapi->mapGetError(ret));
-      vsapi->freeMap(args);
-      vsapi->freeMap(ret);
-      vsapi->freeNode(d.altnode);
-      return;
-   }
+   BIFROST_CHECK_ERROR1
    d.node = vsapi->mapGetNode(ret, "clip", 0, NULL);
    vsapi->freeMap(ret);
    ret = NULL;
@@ -566,12 +567,7 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
       vsapi->mapSetInt(args, "tff", 1, maReplace);
       vsapi->mapConsumeNode(args, "clip", vsapi->mapGetNode(out, "clip", 0, NULL), maReplace);
       ret = vsapi->invoke(stdPlugin, "DoubleWeave", args);
-      if (vsapi->mapGetError(ret)) {
-         vsapi->mapSetError(out, vsapi->mapGetError(ret));
-         vsapi->freeMap(args);
-         vsapi->freeMap(ret);
-         return;
-      }
+      BIFROST_CHECK_ERROR2
       vsapi->clearMap(args);
 
       vsapi->mapSetInt(args, "cycle", 2, maReplace);
@@ -581,12 +577,7 @@ static void VS_CC bifrostCreate(const VSMap *in, VSMap *out, void *userData, VSC
       ret = NULL;
 
       ret = vsapi->invoke(stdPlugin, "SelectEvery", args);
-      if (vsapi->mapGetError(ret)) {
-         vsapi->mapSetError(out, vsapi->mapGetError(ret));
-         vsapi->freeMap(args);
-         vsapi->freeMap(ret);
-         return;
-      }
+      BIFROST_CHECK_ERROR2
       vsapi->mapConsumeNode(out, "clip", vsapi->mapGetNode(ret, "clip", 0, NULL), maReplace);
       vsapi->freeMap(ret);
       ret = NULL;
