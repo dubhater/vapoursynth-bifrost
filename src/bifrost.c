@@ -237,31 +237,26 @@ static const VSFrame *VS_CC bifrostGetFrame(int n, int activationReason, void *i
       vsapi->mapDeleteKey(dst_props, prop);
 
 
-      const uint8_t *srcpp_y = vsapi->getReadPtr(srcpp, 0);
       const uint8_t *srcpp_u = vsapi->getReadPtr(srcpp, 1);
       const uint8_t *srcpp_v = vsapi->getReadPtr(srcpp, 2);
       const VSMap *srcpp_props = vsapi->getFramePropertiesRO(srcpp);
       const int *srcpp_diffs = (const int *)vsapi->mapGetData(srcpp_props, prop, 0, NULL);
 
-      const uint8_t *srcp_y = vsapi->getReadPtr(srcp, 0);
       const uint8_t *srcp_u = vsapi->getReadPtr(srcp, 1);
       const uint8_t *srcp_v = vsapi->getReadPtr(srcp, 2);
       const VSMap *srcp_props = vsapi->getFramePropertiesRO(srcp);
       const int *srcp_diffs = (const int *)vsapi->mapGetData(srcp_props, prop, 0, NULL);
 
-      const uint8_t *srcc_y = vsapi->getReadPtr(srcc, 0);
       const uint8_t *srcc_u = vsapi->getReadPtr(srcc, 1);
       const uint8_t *srcc_v = vsapi->getReadPtr(srcc, 2);
       const VSMap *srcc_props = vsapi->getFramePropertiesRO(srcc);
       const int *srcc_diffs = (const int *)vsapi->mapGetData(srcc_props, prop, 0, NULL);
 
-      const uint8_t *srcn_y = vsapi->getReadPtr(srcn, 0);
       const uint8_t *srcn_u = vsapi->getReadPtr(srcn, 1);
       const uint8_t *srcn_v = vsapi->getReadPtr(srcn, 2);
       const VSMap *srcn_props = vsapi->getFramePropertiesRO(srcn);
       const int *srcn_diffs = (const int *)vsapi->mapGetData(srcn_props, prop, 0, NULL);
 
-      const uint8_t *srcnn_y = vsapi->getReadPtr(srcnn, 0);
       const uint8_t *srcnn_u = vsapi->getReadPtr(srcnn, 1);
       const uint8_t *srcnn_v = vsapi->getReadPtr(srcnn, 2);
 
@@ -271,10 +266,8 @@ static const VSFrame *VS_CC bifrostGetFrame(int n, int activationReason, void *i
       uint8_t *dst_u = vsapi->getWritePtr(dst, 1);
       uint8_t *dst_v = vsapi->getWritePtr(dst, 2);
 
-      ptrdiff_t stride_y = vsapi->getStride(srcc, 0);
       ptrdiff_t stride_uv = vsapi->getStride(srcc, 1);
 
-      int block_height = d->block_height;
       int block_width_uv = d->block_width_uv;
       int block_height_uv = d->block_height_uv;
 
@@ -354,23 +347,18 @@ static const VSFrame *VS_CC bifrostGetFrame(int n, int activationReason, void *i
 
          }
 
-         srcpp_y += block_height * stride_y;
          srcpp_u += block_height_uv * stride_uv;
          srcpp_v += block_height_uv * stride_uv;
 
-         srcp_y += block_height * stride_y;
          srcp_u += block_height_uv * stride_uv;
          srcp_v += block_height_uv * stride_uv;
 
-         srcc_y += block_height * stride_y;
          srcc_u += block_height_uv * stride_uv;
          srcc_v += block_height_uv * stride_uv;
 
-         srcn_y += block_height * stride_y;
          srcn_u += block_height_uv * stride_uv;
          srcn_v += block_height_uv * stride_uv;
 
-         srcnn_y += block_height * stride_y;
          srcnn_u += block_height_uv * stride_uv;
          srcnn_v += block_height_uv * stride_uv;
 
@@ -698,7 +686,7 @@ static void VS_CC blockDiffCreate(const VSMap *in, VSMap *out, void *userData, V
    data = malloc(sizeof(d));
    *data = d;
 
-   VSFilterDependency deps[1] = { data->node, rpGeneral };
+   VSFilterDependency deps[1] = { {data->node, rpGeneral} };
 
    vsapi->createVideoFilter(out, "BlockDiff", data->vi, blockDiffGetFrame, blockDiffFree, fmParallel, deps, 1, data, core);
 }
